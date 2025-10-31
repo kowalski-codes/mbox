@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MBOX Viewer — Upload & Search</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--muted:#9aa7b2;--accent:#1e90ff;--accent-2:#8b5cf6}
+    html,body{height:100%;margin:0;font-family:Inter, Roboto, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial; background:linear-gradient(180deg,#071025 0%, #071623 100%);color:#e6eef6}
+    .app{max-width:1100px;margin:28px auto;padding:20px}
+    header{display:flex;align-items:center;gap:18px}
+    h1{margin:0;font-size:20px}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+
+    .uploader{margin-top:18px;padding:14px;border-radius:10px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);display:flex;gap:14px}
+    .drop{flex:1;min-height:120px;border:2px dashed rgba(255,255,255,0.04);border-radius:8px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:12px;text-align:center}
+    .controls{width:340px;display:flex;flex-direction:column;gap:12px}
+    input[type=file]{display:none}
+    .btn{background:linear-gradient(90deg,var(--accent),var(--accent-2));border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer}
+    .small{font-size:13px;color:var(--muted)}
+
+    .tools{display:flex;gap:12px;margin-top:18px;align-items:center}
+    .search{flex:1}
+    .filters{display:flex;gap:8px;align-items:center}
+    input,select{background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.04);padding:8px;border-radius:8px;color:inherit}
+
+    .layout{display:grid;grid-template-columns:360px 1fr;gap:14px;margin-top:18px}
+    .panel{background:var(--card);border-radius:10px;padding:12px;min-height:320px;overflow:auto}
+
+    .file-list{display:flex;flex-direction:column;gap:8px}
+    .file-item{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px}
+    .meta{font-size:12px;color:var(--muted)}
+
+    .email-list{display:flex;flex-direction:column;gap:8px}
+    .email-item{padding:10px;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,0.02)}
+    .email-item:hover{background:rgba(255,255,255,0.01)}
+    .subject{font-weight:600}
+    .snippet{font-size:13px;color:var(--muted);margin-top:6px}
+
+    .viewer{padding:12px}
+    .hdr{font-size:13px;color:var(--muted);margin-bottom:8px}
+    pre{white-space:pre-wrap;background:rgba(0,0,0,0.2);padding:10px;border-radius:8px;overflow:auto}
+
+    .badge{background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:999px;font-size:12px}
+
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>MBOX Viewer</h1>
+        <p class="lead">Upload multiple .mbox files, search, filter and read emails in your browser. No upload to any server.</p>
+      </div>
+      <div style="margin-left:auto" class="muted">Local-only • Client-side parsing</div>
+    </header>
+
+    <div class="uploader">
+      <div class="drop" id="drop">
+        <div class="small">Drag & drop .mbox files here or</div>
+        <label class="btn" for="files">Choose files</label>
+        <input id="files" type="file" accept=".mbox,.txt" multiple />
+        <div class="small" style="margin-top:8px">Supports multiple mbox files. Parsing is best-effort (plain-text mbox format).</div>
+      </div>
+      <div class="controls">
+        <div class="badge" id="fileCount">No files loaded</div>
+        <div class="small">Loaded files</div>
+        <div class="panel" style="flex:1;overflow:auto;min-height:0">
+          <div id="fileList" class="file-list"></div>
+        </div>
+        <button id="clearAll" class="btn" style="width:100%">Clear all</button>
+      </div>
+    </div>
+
+    <div class="tools">
+      <div class="search">
+        <input id="q" placeholder="Search full text, subject, sender..." style="width:100%" />
+      </div>
+      <div class="filters">
+        <select id="filterFile"><option value="">All files</option></select>
+        <input id="filterFrom" placeholder="From" />
+        <input id="filterSubject" placeholder="Subject" />
+        <button id="clearFilters" class="btn">Clear</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <div class="panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="small">Emails</div>
+          <div class="small" id="emailCount">0</div>
+        </div>
+        <div id="emails" class="email-list"></div>
+      </div>
+
+      <div class="panel viewer" id="viewer">
+        <div class="muted">Open an email to view details</div>
+      </div>
+    </div>
+
+    <footer>
+      Tip: mbox format separates messages with lines that start with "From ". If your file is very large, parsing may take a moment.
+    </footer>
+  </div>
+
+<script>
+// Simple mbox parser + UI. Works client-side.
+const filesInput = document.getElementById('files');
+const drop = document.getElementById('drop');
+const fileListEl = document.getElementById('fileList');
+const fileCount = document.getElementById('fileCount');
+const filterFile = document.getElementById('filterFile');
+const emailsEl = document.getElementById('emails');
+const viewer = document.getElementById('viewer');
+const qInp = document.getElementById('q');
+const filterFrom = document.getElementById('filterFrom');
+const filterSubject = document.getElementById('filterSubject');
+const emailCountEl = document.getElementById('emailCount');
+const clearAllBtn = document.getElementById('clearAll');
+const clearFiltersBtn = document.getElementById('clearFilters');
+
+let state = { files: [], messages: [], filtered: [] };
+
+function human(n){return n.toLocaleString()}
+
+function addFiles(fileList){
+  const arr = Array.from(fileList).filter(f=>f.name.endsWith('.mbox')||f.type === ''||f.name.endsWith('.txt'));
+  if(!arr.length) return;
+  arr.forEach(file => {
+    const id = crypto.randomUUID();
+    state.files.push({id, file, name: file.name});
+    readFileAsText(file).then(txt => parseMbox(txt, id, file.name));
+  });
+  refreshFileList();
+}
+
+function readFileAsText(file){
+  return new Promise((res, rej)=>{
+    const r = new FileReader();
+    r.onload = ()=>res(r.result);
+    r.onerror = ()=>rej(r.error);
+    r.readAsText(file);
+  });
+}
+
+function refreshFileList(){
+  fileListEl.innerHTML = '';
+  filterFile.innerHTML = '<option value="">All files</option>';
+  state.files.forEach(f=>{
+    const el = document.createElement('div'); el.className='file-item';
+    el.innerHTML = `<div>${escapeHtml(f.name)}</div><div class="meta">${state.messages.filter(m=>m.sourceId===f.id).length} msgs</div>`;
+    fileListEl.appendChild(el);
+    const opt = document.createElement('option'); opt.value=f.id; opt.textContent=f.name; filterFile.appendChild(opt);
+  });
+  fileCount.textContent = `${state.files.length} file(s)`;
+}
+
+function parseMbox(text, sourceId, filename){
+  // Split mbox by lines that begin with "From " at the start of a message.
+  // Keep in mind some messages may not follow this exactly; this is best-effort.
+  const lines = text.split(/\r?\n/);
+  const idxs = [];
+  for(let i=0;i<lines.length;i++){
+    if(lines[i].startsWith('From ')) idxs.push(i);
+  }
+  if(idxs.length===0){
+    // treat whole file as single message
+    parseMessage(lines.join('\n'), sourceId, filename);
+    return;
+  }
+  for(let i=0;i<idxs.length;i++){
+    const start = idxs[i];
+    const end = (i+1<idxs.length)? idxs[i+1] : lines.length;
+    const chunk = lines.slice(start,end).join('\n');
+    parseMessage(chunk, sourceId, filename);
+  }
+}
+
+function parseMessage(chunk, sourceId, filename){
+  // Remove the leading "From ..." line if present
+  let raw = chunk;
+  if(raw.startsWith('From ')){
+    const firstNewline = raw.indexOf('\n');
+    raw = raw.slice(firstNewline+1);
+  }
+  // split headers and body
+  const parts = raw.split(/\n\n/);
+  const hdrText = parts.shift()||'';
+  const body = parts.join('\n\n');
+  const headers = {};
+  // unfold headers (handle folded header lines)
+  const hdrLines = hdrText.split(/\r?\n/);
+  let cur = null;
+  hdrLines.forEach(line=>{
+    if(/^\s/.test(line) && cur){ // continuation
+      headers[cur] += '\n' + line.trim();
+    } else {
+      const m = line.match(/^([^:]+):\s*(.*)$/);
+      if(m){ cur = m[1].trim().toLowerCase(); headers[cur] = m[2].trim(); } else { cur = null }
+    }
+  });
+
+  const message = {
+    id: crypto.randomUUID(),
+    sourceId,
+    filename,
+    headers,
+    from: headers['from']||'',
+    to: headers['to']||'',
+    subject: headers['subject']||'(no subject)',
+    date: headers['date']||'',
+    bodyRaw: body,
+    bodyText: tryDecodeBody(body, headers)
+  };
+  state.messages.push(message);
+  state.filtered = state.messages.slice();
+  renderEmails();
+  refreshFileList();
+}
+
+function tryDecodeBody(body, headers){
+  const cte = (headers['content-transfer-encoding']||'').toLowerCase();
+  const ctype = (headers['content-type']||'').toLowerCase();
+  try{
+    if(cte.includes('base64')){
+      // remove whitespace/newlines then decode
+      const cleaned = body.replace(/\s/g, '');
+      // atob -> may throw on non-latin1; convert properly
+      try{ return decodeUtf8Base64(cleaned); }catch(e){ return atob(cleaned) }
+    }
+    if(cte.includes('quoted-printable')){
+      return decodeQuotedPrintable(body);
+    }
+  }catch(e){
+    return body;
+  }
+  // no special encoding -> return as-is
+  // if HTML, we could show raw; keep as text
+  // strip leading > From lines
+  return body;
+}
+
+function decodeUtf8Base64(str){
+  // atob -> binary string; convert to UTF-8 string
+  const bin = atob(str);
+  // convert binary string to percent-encoded then decode
+  let uri = '';
+  for(let i=0;i<bin.length;i++){
+    uri += '%' + ('00' + bin.charCodeAt(i).toString(16)).slice(-2);
+  }
+  return decodeURIComponent(uri);
+}
+
+function decodeQuotedPrintable(str){
+  // simple QP decoder (handles soft line breaks, =XX hex)
+  return str.replace(/=(?:\r?\n)/g, '')
+            .replace(/=([0-9A-Fa-f]{2})/g, function(m,hex){ return String.fromCharCode(parseInt(hex,16)); });
+}
+
+function renderEmails(){
+  const q = qInp.value.trim().toLowerCase();
+  const fFile = filterFile.value;
+  const fFrom = filterFrom.value.trim().toLowerCase();
+  const fSub = filterSubject.value.trim().toLowerCase();
+
+  let list = state.messages.slice();
+  if(fFile) list = list.filter(m=>m.sourceId===fFile);
+  if(fFrom) list = list.filter(m=>m.from.toLowerCase().includes(fFrom));
+  if(fSub) list = list.filter(m=>m.subject.toLowerCase().includes(fSub));
+  if(q){
+    list = list.filter(m=>{
+      return (m.subject||'').toLowerCase().includes(q) || (m.from||'').toLowerCase().includes(q) || (m.bodyText||'').toLowerCase().includes(q) || (m.bodyRaw||'').toLowerCase().includes(q);
+    });
+  }
+  state.filtered = list;
+
+  emailsEl.innerHTML = '';
+  list.forEach(m=>{
+    const el = document.createElement('div'); el.className='email-item';
+    const snippet = (m.bodyText||m.bodyRaw||'').slice(0,240).replace(/\s+/g,' ').trim();
+    el.innerHTML = `<div><div class="subject">${escapeHtml(m.subject)}</div><div class="meta">${escapeHtml(m.from)} — <span class="muted">${escapeHtml(m.date)}</span></div><div class="snippet">${escapeHtml(snippet)}</div></div>`;
+    el.onclick = ()=>openMessage(m.id);
+    emailsEl.appendChild(el);
+  });
+  emailCountEl.textContent = `${list.length}`;
+}
+
+function openMessage(id){
+  const m = state.messages.find(x=>x.id===id);
+  if(!m) return;
+  viewer.innerHTML = '';
+  const headerHtml = `<div class="hdr"><strong>${escapeHtml(m.subject)}</strong><div class="small">From: ${escapeHtml(m.from)}</div><div class="small">To: ${escapeHtml(m.to)}</div><div class="small">Date: ${escapeHtml(m.date)}</div><div class="small">Source: ${escapeHtml(m.filename)}</div></div>`;
+  const bodyHtml = `<div style="margin-top:8px"><details open><summary style="cursor:pointer;padding:6px">Message body (decoded if possible)</summary><pre>${escapeHtml(m.bodyText || m.bodyRaw || '')}</pre></details></div>`;
+  const rawHtml = `<div style="margin-top:8px"><details><summary style="cursor:pointer;padding:6px">Raw headers + body</summary><pre>${escapeHtml(Object.entries(m.headers).map(([k,v])=>k+': '+v).join('\n')+'\n\n'+m.bodyRaw)}</pre></details></div>`;
+  const actions = `<div style="display:flex;gap:8px;margin-top:8px"><button class="btn" id="copyRaw">Copy raw</button><a id="dlRaw" class="btn" href="#">Download .eml</a></div>`;
+  viewer.innerHTML = headerHtml + actions + bodyHtml + rawHtml;
+  document.getElementById('copyRaw').onclick = ()=>{
+    navigator.clipboard.writeText(Object.entries(m.headers).map(([k,v])=>k+': '+v).join('\n') + '\n\n' + m.bodyRaw).then(()=>alert('Copied to clipboard'));
+  };
+  const blob = new Blob([Object.entries(m.headers).map(([k,v])=>k+': '+v).join('\n')+'\n\n'+m.bodyRaw], {type:'message/rfc822'});
+  const url = URL.createObjectURL(blob);
+  const dl = document.getElementById('dlRaw'); dl.href = url; dl.download = `${sanitizeFilename(m.subject||'message')}.eml`;
+}
+
+function sanitizeFilename(name){
+  return name.replace(/[\\/:*?"<>|]/g,'_').slice(0,120) || 'message';
+}
+
+function escapeHtml(s){
+  if(!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// drag/drop
+['dragenter','dragover','dragleave','drop'].forEach(evt=>{
+  drop.addEventListener(evt,e=>e.preventDefault());
+});
+drop.addEventListener('drop', e=>{
+  const dt = e.dataTransfer; if(!dt) return; addFiles(dt.files);
+});
+filesInput.addEventListener('change', e=>addFiles(e.target.files));
+
+qInp.addEventListener('input', debounce(renderEmails, 250));
+filterFile.addEventListener('change', renderEmails);
+filterFrom.addEventListener('input', debounce(renderEmails, 300));
+filterSubject.addEventListener('input', debounce(renderEmails, 300));
+clearAllBtn.addEventListener('click', ()=>{state={files:[],messages:[],filtered:[]};fileListEl.innerHTML='';emailsEl.innerHTML='';viewer.innerHTML='';fileCount.textContent='No files loaded';filterFile.innerHTML='<option value="">All files</option>';emailCountEl.textContent='0'});
+clearFiltersBtn.addEventListener('click', ()=>{qInp.value='';filterFile.value='';filterFrom.value='';filterSubject.value='';renderEmails();});
+
+function debounce(fn,ms){let t;return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+
+function sanitizeFilename(name){return name.replace(/[\\/:*?"<>|]/g,'_').slice(0,120) || 'message';}
+
+// initial
+function init(){
+  fileCount.textContent = '0 files';
+}
+init();
+
+</script>
+</body>
+</html>
